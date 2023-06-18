@@ -155,9 +155,15 @@ class MaskDecoder(nn.Module):
         b, c, h, w = upscaled_embedding.shape
         masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
 
+        upscaled_embedding_agg = torch.mean(
+            upscaled_embedding.reshape((64, 32, -1)), dim=-1
+        )
+        upscaled_embedding_agg = upscaled_embedding_agg.T
+        mask_features = hyper_in @ upscaled_embedding_agg
+
         # Generate mask quality predictions
         iou_pred = self.iou_prediction_head(iou_token_out)
-        return masks, iou_pred, mask_tokens_out
+        return masks, iou_pred, mask_features
 
 
 # Lightly adapted from

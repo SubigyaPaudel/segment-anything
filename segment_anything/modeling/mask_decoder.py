@@ -163,7 +163,7 @@ class MaskDecoder(nn.Module):
 
         # Generate mask quality predictions
         iou_pred = self.iou_prediction_head(iou_token_out)
-        return masks, iou_pred, hyper_in
+        return masks, iou_pred, mask_tokens_out
 
 
 # Lightly adapted from

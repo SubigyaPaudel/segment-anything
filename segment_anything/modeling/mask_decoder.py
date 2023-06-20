@@ -140,7 +140,9 @@ class MaskDecoder(nn.Module):
         # Run the transformer
         hs, src = self.transformer(src, pos_src, tokens)
         iou_token_out = hs[:, 0, :]
-        mask_tokens_out = hs[:, 1 : (1 + self.num_mask_tokens), :]
+        mask_tokens_out = hs[
+            :, 1 : (1 + self.num_mask_tokens), :
+        ]  # candidate 256 dim features
 
         # Upscale mask embeddings and predict masks using the mask tokens
         src = src.transpose(1, 2).view(b, c, h, w)
@@ -151,7 +153,7 @@ class MaskDecoder(nn.Module):
                 self.output_hypernetworks_mlps[i](mask_tokens_out[:, i, :])
             )
 
-        hyper_in = torch.stack(hyper_in_list, dim=1)
+        hyper_in = torch.stack(hyper_in_list, dim=1)  # candiate 32 dim features
         b, c, h, w = upscaled_embedding.shape
         masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
 
@@ -159,11 +161,11 @@ class MaskDecoder(nn.Module):
             upscaled_embedding.reshape((64, 32, -1)), dim=-1
         )
         upscaled_embedding_agg = upscaled_embedding_agg.T
-        mask_features = hyper_in @ upscaled_embedding_agg
+        mask_features = hyper_in @ upscaled_embedding_agg  # candidate 64 dim features
 
         # Generate mask quality predictions
         iou_pred = self.iou_prediction_head(iou_token_out)
-        return masks, iou_pred, mask_tokens_out
+        return masks, iou_pred, mask_features
 
 
 # Lightly adapted from

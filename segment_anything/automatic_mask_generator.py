@@ -200,7 +200,12 @@ class SamAutomaticMaskGenerator:
             downscaled_masks = Resize(size=(256, 256))(
                 torch.from_numpy(segmentation[None, :, :])
             )[0]
-            mask_feature = torch.mean(semantic_map[:, downscaled_masks], axis=1)
+            mask_feature = (
+                torch.mean(semantic_map[:, downscaled_masks], axis=1)
+                .detach()
+                .cpu()
+                .numpy()
+            )
             ann = {
                 "segmentation": segmentation,
                 "area": area_from_rle(mask_data["rles"][idx]),

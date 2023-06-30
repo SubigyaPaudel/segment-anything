@@ -256,16 +256,6 @@ class SamPredictor:
             low_res_masks, self.input_size, self.original_size
         )
 
-        print(
-            "Semantic_maps.shape prior to interpolation=",
-            low_res_mask_semantic_maps.shape,
-        )
-        semantic_maps = self.model.postprocess_masks(
-            low_res_mask_semantic_maps,
-            self.input_size,
-            self.original_size,
-        )
-
         if not return_logits:
             masks = masks > self.model.mask_threshold
 
@@ -273,7 +263,7 @@ class SamPredictor:
             masks,
             iou_predictions,
             low_res_masks,
-            semantic_maps,
+            low_res_mask_semantic_maps,
             mask_semantic_maps_indices,
         )
 

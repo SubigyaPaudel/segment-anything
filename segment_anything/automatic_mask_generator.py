@@ -7,6 +7,7 @@
 import numpy as np
 import torch
 from torchvision.ops.boxes import batched_nms, box_area  # type: ignore
+import torch.nn.functional as F
 
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -160,7 +161,7 @@ class SamAutomaticMaskGenerator:
         """
 
         # Generate masks
-        mask_data = self._generate_masks(image)
+        mask_data, semantic_maps = self._generate_masks(image)
 
         # Filter small disconnected regions and holes in masks
         if self.min_mask_region_area > 0:
@@ -182,7 +183,18 @@ class SamAutomaticMaskGenerator:
 
         # Write mask records
         curr_anns = []
+        for key, values in mask_data.items():
+            print(key, end=", ")
+        print("")
+
+        semantic_maps = torch.vstack(semantic_maps)
+
         for idx in range(len(mask_data["segmentations"])):
+            semantic_maps = semantic_maps[
+                int(mask_data["mask_semantic_map_indices"][idx])
+            ]
+            model_input_semantic_map = F.interpolate(semantic_maps, image.shape[:-1])
+
             ann = {
                 "segmentation": mask_data["segmentations"][idx],
                 "area": area_from_rle(mask_data["rles"][idx]),
@@ -191,11 +203,10 @@ class SamAutomaticMaskGenerator:
                 "point_coords": [mask_data["points"][idx].tolist()],
                 "stability_score": mask_data["stability_score"][idx].item(),
                 "crop_box": box_xyxy_to_xywh(mask_data["crop_boxes"][idx]).tolist(),
-                "mask_feature": mask_data["mask_features"][idx],
             }
             curr_anns.append(ann)
 
-        return curr_anns
+        return curr_anns, semantic_maps
 
     def _generate_masks(self, image: np.ndarray) -> MaskData:
         orig_size = image.shape[:2]
@@ -205,9 +216,14 @@ class SamAutomaticMaskGenerator:
 
         # Iterate over image crops
         data = MaskData()
+        index = 0
         for crop_box, layer_idx in zip(crop_boxes, layer_idxs):
-            crop_data = self._process_crop(image, crop_box, layer_idx, orig_size)
+            print("crop box index = ", index)
+            crop_data, semantic_maps = self._process_crop(
+                image, crop_box, layer_idx, orig_size
+            )
             data.cat(crop_data)
+            index += 1
 
         # Remove duplicate masks between crops
         if len(crop_boxes) > 1:
@@ -223,7 +239,7 @@ class SamAutomaticMaskGenerator:
             data.filter(keep_by_nms)
 
         data.to_numpy()
-        return data
+        return data, semantic_maps
 
     def _process_crop(
         self,
@@ -248,6 +264,7 @@ class SamAutomaticMaskGenerator:
         for batch_num, (points,) in enumerate(
             batch_iterator(self.points_per_batch, points_for_image)
         ):
+            print(f"Processing batch {batch_num}", end="\r")
             batch_data, semantic_maps = self._process_batch(
                 points, cropped_im_size, crop_box, orig_size, batch_num
             )
@@ -270,7 +287,7 @@ class SamAutomaticMaskGenerator:
         data["points"] = uncrop_points(data["points"], crop_box)
         data["crop_boxes"] = torch.tensor([crop_box for _ in range(len(data["rles"]))])
 
-        return data
+        return data, batch_semantic_maps
 
     def _process_batch(
         self,

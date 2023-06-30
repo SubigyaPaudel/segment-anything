@@ -7,7 +7,7 @@
 import numpy as np
 import torch
 from torchvision.ops.boxes import batched_nms, box_area  # type: ignore
-import torch.nn.functional as F
+from torchvision.transforms import Resize
 
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -159,9 +159,15 @@ class SamAutomaticMaskGenerator:
                crop_box (list(float)): The crop of the image used to generate
                  the mask, given in XYWH format.
         """
+        # helper function
 
         # Generate masks
         mask_data, semantic_maps = self._generate_masks(image)
+
+        def retrieve_semantic_map(index, batch_size=64):
+            batch_index = index // batch_size
+            inter_batch_index = index % batch_size
+            return semantic_maps[batch_index][inter_batch_index]
 
         # Filter small disconnected regions and holes in masks
         if self.min_mask_region_area > 0:
@@ -183,30 +189,33 @@ class SamAutomaticMaskGenerator:
 
         # Write mask records
         curr_anns = []
-        for key, values in mask_data.items():
-            print(key, end=", ")
-        print("")
-
-        semantic_maps = torch.vstack(semantic_maps)
 
         for idx in range(len(mask_data["segmentations"])):
-            semantic_maps = semantic_maps[
+            semantic_map = retrieve_semantic_map(
                 int(mask_data["mask_semantic_map_indices"][idx])
-            ]
-            model_input_semantic_map = F.interpolate(semantic_maps, image.shape[:-1])
-
+            )
+            segmentation = mask_data["segmentations"][idx]
+            semantic_map_dims = semantic_map.shape[1:]
+            semantic_map_dims = semantic_map_dims[0], semantic_map_dims[1]
+            downscaled_masks = Resize(size=(256, 256))(
+                torch.from_numpy(segmentation[None, :, :])
+            )[0]
+            mask_feature = torch.mean(semantic_map[:, downscaled_masks], axis=1)
             ann = {
-                "segmentation": mask_data["segmentations"][idx],
+                "segmentation": segmentation,
                 "area": area_from_rle(mask_data["rles"][idx]),
                 "bbox": box_xyxy_to_xywh(mask_data["boxes"][idx]).tolist(),
                 "predicted_iou": mask_data["iou_preds"][idx].item(),
                 "point_coords": [mask_data["points"][idx].tolist()],
                 "stability_score": mask_data["stability_score"][idx].item(),
                 "crop_box": box_xyxy_to_xywh(mask_data["crop_boxes"][idx]).tolist(),
+                "mask_feature": mask_feature,
             }
             curr_anns.append(ann)
 
-        return curr_anns, semantic_maps
+        del semantic_maps
+
+        return curr_anns
 
     def _generate_masks(self, image: np.ndarray) -> MaskData:
         orig_size = image.shape[:2]

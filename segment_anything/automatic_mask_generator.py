@@ -243,11 +243,15 @@ class SamAutomaticMaskGenerator:
         points_for_image = self.point_grids[crop_layer_idx] * points_scale
 
         # Generate masks for this crop in batches
+        batch_semantic_maps = []
         data = MaskData()
-        for (points,) in batch_iterator(self.points_per_batch, points_for_image):
-            batch_data = self._process_batch(
-                points, cropped_im_size, crop_box, orig_size
+        for batch_num, (points,) in enumerate(
+            batch_iterator(self.points_per_batch, points_for_image)
+        ):
+            batch_data, semantic_maps = self._process_batch(
+                points, cropped_im_size, crop_box, orig_size, batch_num
             )
+            batch_semantic_maps.append(semantic_maps)
             data.cat(batch_data)
             del batch_data
         self.predictor.reset_image()
@@ -274,7 +278,10 @@ class SamAutomaticMaskGenerator:
         im_size: Tuple[int, ...],
         crop_box: List[int],
         orig_size: Tuple[int, ...],
+        batch_num: int,
     ) -> MaskData:
+        batch_size = points.shape[0]
+
         orig_h, orig_w = orig_size
 
         # Run model on this batch
@@ -283,7 +290,13 @@ class SamAutomaticMaskGenerator:
         in_labels = torch.ones(
             in_points.shape[0], dtype=torch.int, device=in_points.device
         )
-        masks, iou_preds, _, mask_features = self.predictor.predict_torch(
+        (
+            masks,
+            iou_preds,
+            _,
+            mask_semantic_maps,
+            mask_semantic_map_indices,
+        ) = self.predictor.predict_torch(
             in_points[:, None, :],
             in_labels[:, None],
             multimask_output=True,
@@ -291,11 +304,13 @@ class SamAutomaticMaskGenerator:
         )
 
         # Serialize predictions and store in MaskData
+
         data = MaskData(
             masks=masks.flatten(0, 1),
             iou_preds=iou_preds.flatten(0, 1),
             points=torch.as_tensor(points.repeat(masks.shape[1], axis=0)),
-            mask_features=mask_features.flatten(0, 1),
+            mask_semantic_map_indices=mask_semantic_map_indices.flatten(0, 1)
+            + batch_num * batch_size,
         )
 
         del masks
@@ -329,9 +344,10 @@ class SamAutomaticMaskGenerator:
         # Compress to RLE
         data["masks"] = uncrop_masks(data["masks"], crop_box, orig_h, orig_w)
         data["rles"] = mask_to_rle_pytorch(data["masks"])
+
         del data["masks"]
 
-        return data
+        return data, mask_semantic_maps
 
     @staticmethod
     def postprocess_small_regions(

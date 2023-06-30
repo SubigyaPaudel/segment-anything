@@ -79,7 +79,7 @@ class MaskDecoder(nn.Module):
         sparse_prompt_embeddings: torch.Tensor,
         dense_prompt_embeddings: torch.Tensor,
         multimask_output: bool,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Predict masks given image and prompt embeddings.
 
@@ -95,7 +95,12 @@ class MaskDecoder(nn.Module):
           torch.Tensor: batched predicted masks
           torch.Tensor: batched predictions of mask quality
         """
-        masks, iou_pred, mask_features = self.predict_masks(
+        (
+            masks,
+            iou_pred,
+            mask_semantic_maps,
+            mask_semantic_maps_indices,
+        ) = self.predict_masks(
             image_embeddings=image_embeddings,
             image_pe=image_pe,
             sparse_prompt_embeddings=sparse_prompt_embeddings,
@@ -109,10 +114,10 @@ class MaskDecoder(nn.Module):
             mask_slice = slice(0, 1)
         masks = masks[:, mask_slice, :, :]
         iou_pred = iou_pred[:, mask_slice]
-        mask_features = mask_features[:, mask_slice, :]
+        mask_semantic_maps_indices = mask_semantic_maps_indices[:, mask_slice]
 
         # Prepare output
-        return masks, iou_pred, mask_features
+        return masks, iou_pred, mask_semantic_maps, mask_semantic_maps_indices
 
     def predict_masks(
         self,
@@ -120,7 +125,7 @@ class MaskDecoder(nn.Module):
         image_pe: torch.Tensor,
         sparse_prompt_embeddings: torch.Tensor,
         dense_prompt_embeddings: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Predicts masks. See 'forward' for more details."""
         # Concatenate output tokens
         output_tokens = torch.cat(
@@ -157,15 +162,26 @@ class MaskDecoder(nn.Module):
         b, c, h, w = upscaled_embedding.shape
         masks = (hyper_in @ upscaled_embedding.view(b, c, h * w)).view(b, -1, h, w)
 
-        upscaled_embedding_agg = torch.mean(
-            upscaled_embedding.reshape((64, 32, -1)), dim=-1
-        )
-        upscaled_embedding_agg = upscaled_embedding_agg.T
-        mask_features = hyper_in @ upscaled_embedding_agg  # candidate 64 dim features
+        semantic_map_indices = []
+
+        for batch in range(b):
+            batch_indices = []
+            for mask in range(self.num_mask_tokens):
+                batch_indices.append(batch)
+            semantic_map_indices.append(torch.Tensor(batch_indices))
+
+        mask_semantic_maps_indices = torch.vstack(semantic_map_indices)
+        mask_semantic_maps = upscaled_embedding
+
+        # upscaled_embedding_agg = torch.mean(
+        #     upscaled_embedding.reshape((64, 32, -1)), dim=-1
+        # )
+        # upscaled_embedding_agg = upscaled_embedding_agg.T
+        # mask_features = hyper_in @ upscaled_embedding_agg  # candidate 64 dim features
 
         # Generate mask quality predictions
         iou_pred = self.iou_prediction_head(iou_token_out)
-        return masks, iou_pred, mask_tokens_out
+        return masks, iou_pred, mask_semantic_maps, mask_semantic_maps_indices
 
 
 # Lightly adapted from

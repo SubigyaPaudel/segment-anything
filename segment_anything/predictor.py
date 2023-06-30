@@ -184,7 +184,7 @@ class SamPredictor:
         mask_input: Optional[torch.Tensor] = None,
         multimask_output: bool = True,
         return_logits: bool = False,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Predict masks for the given input prompts, using the currently set image.
         Input prompts are batched torch tensors and are expected to already be
@@ -238,7 +238,12 @@ class SamPredictor:
         )
 
         # Predict masks
-        low_res_masks, iou_predictions, mask_features = self.model.mask_decoder(
+        (
+            low_res_masks,
+            iou_predictions,
+            low_res_mask_semantic_maps,
+            mask_semantic_maps_indices,
+        ) = self.model.mask_decoder(
             image_embeddings=self.features,
             image_pe=self.model.prompt_encoder.get_dense_pe(),
             sparse_prompt_embeddings=sparse_embeddings,
@@ -251,10 +256,26 @@ class SamPredictor:
             low_res_masks, self.input_size, self.original_size
         )
 
+        print(
+            "Semantic_maps.shape prior to interpolation=",
+            low_res_mask_semantic_maps.shape,
+        )
+        semantic_maps = self.model.postprocess_masks(
+            low_res_mask_semantic_maps,
+            self.input_size,
+            self.original_size,
+        )
+
         if not return_logits:
             masks = masks > self.model.mask_threshold
 
-        return masks, iou_predictions, low_res_masks, mask_features
+        return (
+            masks,
+            iou_predictions,
+            low_res_masks,
+            semantic_maps,
+            mask_semantic_maps_indices,
+        )
 
     def get_image_embedding(self) -> torch.Tensor:
         """

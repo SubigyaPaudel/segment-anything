@@ -59,7 +59,7 @@ class SamPredictor:
             None, :, :, :
         ]
 
-        self.set_torch_image(input_image_torch, image.shape[:2])
+        return self.set_torch_image(input_image_torch, image.shape[:2])
 
     @torch.no_grad()
     def set_torch_image(
@@ -90,6 +90,8 @@ class SamPredictor:
         input_image = self.model.preprocess(transformed_image)
         self.features = self.model.image_encoder(input_image)
         self.is_image_set = True
+
+        return self.features
 
     def predict(
         self,
@@ -184,7 +186,7 @@ class SamPredictor:
         mask_input: Optional[torch.Tensor] = None,
         multimask_output: bool = True,
         return_logits: bool = False,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Predict masks for the given input prompts, using the currently set image.
         Input prompts are batched torch tensors and are expected to already be
@@ -254,7 +256,7 @@ class SamPredictor:
         if not return_logits:
             masks = masks > self.model.mask_threshold
 
-        return masks, iou_predictions, low_res_masks, mask_features
+        return masks, iou_predictions, low_res_masks
 
     def get_image_embedding(self) -> torch.Tensor:
         """

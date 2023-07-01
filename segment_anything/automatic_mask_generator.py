@@ -7,7 +7,7 @@
 import numpy as np
 import torch
 from torchvision.ops.boxes import batched_nms, box_area  # type: ignore
-
+from torchvision.transforms import Resize
 from typing import Any, Dict, List, Optional, Tuple
 
 from .modeling import Sam
@@ -160,7 +160,10 @@ class SamAutomaticMaskGenerator:
         """
 
         # Generate masks
-        mask_data = self._generate_masks(image)
+        mask_data, image_embeddings = self._generate_masks(image)
+
+        print(len(image_embeddings))
+        print(image_embeddings[0].shape)
 
         # Filter small disconnected regions and holes in masks
         if self.min_mask_region_area > 0:
@@ -169,6 +172,9 @@ class SamAutomaticMaskGenerator:
                 self.min_mask_region_area,
                 max(self.box_nms_thresh, self.crop_nms_thresh),
             )
+
+        print("Mask_data = ", mask_data)
+        print("Image embeddings = ", image_embeddings)
 
         # Encode masks
         if self.output_mode == "coco_rle":
@@ -181,23 +187,35 @@ class SamAutomaticMaskGenerator:
             mask_data["segmentations"] = mask_data["rles"]
 
         # Write mask records
+        IMAGE_EMBEDDING_DIMS = (256, 64, 64)
         curr_anns = []
+
         for idx in range(len(mask_data["segmentations"])):
+            corresponding_image_embedding = image_embeddings[
+                mask_data["indices"][idx]
+            ].reshape(IMAGE_EMBEDDING_DIMS)
+            segmentation = mask_data["segmentations"][idx]
+            downscaled_masks = Resize(size=IMAGE_EMBEDDING_DIMS[1:])(
+                torch.from_numpy(segmentation[None, :, :])
+            )[0]
+            mask_feature = torch.mean(
+                corresponding_image_embedding[:, downscaled_masks], axis=1
+            )
             ann = {
-                "segmentation": mask_data["segmentations"][idx],
+                "segmentation": segmentation,
                 "area": area_from_rle(mask_data["rles"][idx]),
                 "bbox": box_xyxy_to_xywh(mask_data["boxes"][idx]).tolist(),
                 "predicted_iou": mask_data["iou_preds"][idx].item(),
                 "point_coords": [mask_data["points"][idx].tolist()],
                 "stability_score": mask_data["stability_score"][idx].item(),
                 "crop_box": box_xyxy_to_xywh(mask_data["crop_boxes"][idx]).tolist(),
-                "mask_feature": mask_data["mask_features"][idx],
+                "mask_feature": mask_feature,
             }
             curr_anns.append(ann)
 
         return curr_anns
 
-    def _generate_masks(self, image: np.ndarray) -> MaskData:
+    def _generate_masks(self, image: np.ndarray) -> Tuple[MaskData, torch.Tensor]:
         orig_size = image.shape[:2]
         crop_boxes, layer_idxs = generate_crop_boxes(
             orig_size, self.crop_n_layers, self.crop_overlap_ratio
@@ -205,9 +223,17 @@ class SamAutomaticMaskGenerator:
 
         # Iterate over image crops
         data = MaskData()
+        image_embeddings = []
+        index = 0
         for crop_box, layer_idx in zip(crop_boxes, layer_idxs):
-            crop_data = self._process_crop(image, crop_box, layer_idx, orig_size)
+            crop_data, image_embedding = self._process_crop(
+                image, crop_box, layer_idx, orig_size
+            )
+            image_embeddings.append(image_embedding)
+            indices = {"indices": [index] * len(crop_data["rles"])}
+            index += 1
             data.cat(crop_data)
+            data.cat(indices)
 
         # Remove duplicate masks between crops
         if len(crop_boxes) > 1:
@@ -223,7 +249,7 @@ class SamAutomaticMaskGenerator:
             data.filter(keep_by_nms)
 
         data.to_numpy()
-        return data
+        return data, image_embeddings
 
     def _process_crop(
         self,
@@ -231,12 +257,12 @@ class SamAutomaticMaskGenerator:
         crop_box: List[int],
         crop_layer_idx: int,
         orig_size: Tuple[int, ...],
-    ) -> MaskData:
+    ) -> Tuple[MaskData, torch.Tensor]:
         # Crop the image and calculate embeddings
         x0, y0, x1, y1 = crop_box
         cropped_im = image[y0:y1, x0:x1, :]
         cropped_im_size = cropped_im.shape[:2]
-        self.predictor.set_image(cropped_im)
+        image_embeddings = self.predictor.set_image(cropped_im)
 
         # Get points for this crop
         points_scale = np.array(cropped_im_size)[None, ::-1]
@@ -266,7 +292,7 @@ class SamAutomaticMaskGenerator:
         data["points"] = uncrop_points(data["points"], crop_box)
         data["crop_boxes"] = torch.tensor([crop_box for _ in range(len(data["rles"]))])
 
-        return data
+        return data, image_embeddings
 
     def _process_batch(
         self,
@@ -283,7 +309,11 @@ class SamAutomaticMaskGenerator:
         in_labels = torch.ones(
             in_points.shape[0], dtype=torch.int, device=in_points.device
         )
-        masks, iou_preds, _, mask_features = self.predictor.predict_torch(
+        (
+            masks,
+            iou_preds,
+            _,
+        ) = self.predictor.predict_torch(
             in_points[:, None, :],
             in_labels[:, None],
             multimask_output=True,
@@ -295,7 +325,6 @@ class SamAutomaticMaskGenerator:
             masks=masks.flatten(0, 1),
             iou_preds=iou_preds.flatten(0, 1),
             points=torch.as_tensor(points.repeat(masks.shape[1], axis=0)),
-            mask_features=mask_features.flatten(0, 1),
         )
 
         del masks

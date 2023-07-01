@@ -162,9 +162,6 @@ class SamAutomaticMaskGenerator:
         # Generate masks
         mask_data, image_embeddings = self._generate_masks(image)
 
-        print(len(image_embeddings))
-        print(image_embeddings[0].shape)
-
         # Filter small disconnected regions and holes in masks
         if self.min_mask_region_area > 0:
             mask_data = self.postprocess_small_regions(
@@ -172,9 +169,6 @@ class SamAutomaticMaskGenerator:
                 self.min_mask_region_area,
                 max(self.box_nms_thresh, self.crop_nms_thresh),
             )
-
-        print("Mask_data = ", mask_data)
-        print("Image embeddings = ", image_embeddings)
 
         # Encode masks
         if self.output_mode == "coco_rle":

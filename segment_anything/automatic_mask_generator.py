@@ -9,6 +9,7 @@ import torch
 from torchvision.ops.boxes import batched_nms, box_area  # type: ignore
 from torchvision.transforms import Resize
 from typing import Any, Dict, List, Optional, Tuple
+import matplotlib.pyplot as plt
 
 from .modeling import Sam
 from .predictor import SamPredictor
@@ -195,6 +196,12 @@ class SamAutomaticMaskGenerator:
             mask_feature = torch.mean(
                 corresponding_image_embedding[:, downscaled_masks], axis=1
             )
+            if torch.sum(torch.isnan(mask_feature)).item() > 0:
+                # for very small masks, the downsampling can lead
+                # to the mask disappearing and having nan entries.
+                # We remedy that by replacing is with a mask feature
+                # vector with zeros
+                mask_feature = torch.zeros(256)
             ann = {
                 "segmentation": segmentation,
                 "area": area_from_rle(mask_data["rles"][idx]),

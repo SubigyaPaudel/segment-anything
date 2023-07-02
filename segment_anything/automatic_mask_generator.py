@@ -201,8 +201,8 @@ class SamAutomaticMaskGenerator:
                 torch.from_numpy(segmentation[None, :, :])
             )[0]
             mask_feature = (
-                torch.mean(semantic_map[:, downscaled_masks], axis=1)
-                .detach()
+                torch.max(semantic_map[:, downscaled_masks], axis=1)
+                .values.detach()
                 .cpu()
                 .numpy()
             )
@@ -232,7 +232,6 @@ class SamAutomaticMaskGenerator:
         data = MaskData()
         index = 0
         for crop_box, layer_idx in zip(crop_boxes, layer_idxs):
-            print("crop box index = ", index)
             crop_data, semantic_maps = self._process_crop(
                 image, crop_box, layer_idx, orig_size
             )
@@ -278,7 +277,6 @@ class SamAutomaticMaskGenerator:
         for batch_num, (points,) in enumerate(
             batch_iterator(self.points_per_batch, points_for_image)
         ):
-            print(f"Processing batch {batch_num}", end="\r")
             batch_data, semantic_maps = self._process_batch(
                 points, cropped_im_size, crop_box, orig_size, batch_num
             )

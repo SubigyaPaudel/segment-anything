@@ -193,15 +193,19 @@ class SamAutomaticMaskGenerator:
             downscaled_masks = Resize(size=IMAGE_EMBEDDING_DIMS[1:])(
                 torch.from_numpy(segmentation[None, :, :])
             )[0]
-            mask_feature = torch.mean(
-                corresponding_image_embedding[:, downscaled_masks], axis=1
-            )
-            if torch.sum(torch.isnan(mask_feature)).item() > 0:
+
+            embeddings_at_mask_locations = corresponding_image_embedding[
+                :, downscaled_masks
+            ]
+
+            if embeddings_at_mask_locations.shape[1] == 0:
                 # for very small masks, the downsampling can lead
                 # to the mask disappearing and having nan entries.
                 # We remedy that by replacing is with a mask feature
                 # vector with zeros
                 mask_feature = torch.zeros(256)
+            else:
+                mask_feature = torch.max(embeddings_at_mask_locations, 1).values
             ann = {
                 "segmentation": segmentation,
                 "area": area_from_rle(mask_data["rles"][idx]),
